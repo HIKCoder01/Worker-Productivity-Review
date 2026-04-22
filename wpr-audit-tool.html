@@ -1,0 +1,952 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>WPR Audit — Timesheet × Call Activity</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=IBM+Plex+Mono:wght@400;500;600&family=Mulish:wght@300;400;500;600;700&display=swap" rel="stylesheet"/>
+<style>
+/* ── reset & tokens ─────────────────────────────────────────── */
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --ink:#0b0d10;
+  --paper:#f5f4f0;
+  --cream:#edeae3;
+  --rule:#d8d4cb;
+  --rule2:#c9c4b9;
+  --red:#c0392b;
+  --red-light:#fdf1f0;
+  --red-mid:#f5c6c3;
+  --amber:#b8860b;
+  --amber-light:#fdf8e8;
+  --green:#1a6b3a;
+  --green-light:#ebf5ef;
+  --blue:#1a4a8a;
+  --blue-light:#edf2fb;
+  --mono:'IBM Plex Mono',monospace;
+  --head:'Bebas Neue',sans-serif;
+  --body:'Mulish',sans-serif;
+}
+html,body{height:100%;background:var(--paper);color:var(--ink);font-family:var(--body)}
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-track{background:var(--cream)}
+::-webkit-scrollbar-thumb{background:var(--rule2);border-radius:3px}
+
+/* ── layout ─────────────────────────────────────────────────── */
+.app{display:flex;flex-direction:column;min-height:100vh}
+.topbar{
+  background:var(--ink);color:var(--paper);
+  display:flex;align-items:center;justify-content:space-between;
+  padding:0 32px;height:56px;
+  border-bottom:3px solid var(--red);
+  position:sticky;top:0;z-index:100;
+}
+.logo{font-family:var(--head);font-size:26px;letter-spacing:.04em;color:#fff;display:flex;align-items:center;gap:10px}
+.logo-dot{width:10px;height:10px;background:var(--red);border-radius:50%;flex-shrink:0}
+.topbar-right{display:flex;align-items:center;gap:20px}
+.topbar-stat{text-align:right}
+.topbar-stat .val{font-family:var(--mono);font-size:18px;font-weight:600;line-height:1}
+.topbar-stat .lbl{font-size:9px;text-transform:uppercase;letter-spacing:.1em;opacity:.45;margin-top:2px}
+.main{flex:1;padding:32px}
+.page{display:none}
+.page.active{display:block}
+
+/* ── tabs ───────────────────────────────────────────────────── */
+.tabs{display:flex;border-bottom:2px solid var(--rule);margin-bottom:28px;gap:0}
+.tab-btn{
+  font-family:var(--body);font-size:11px;font-weight:700;
+  text-transform:uppercase;letter-spacing:.1em;
+  border:none;background:none;cursor:pointer;
+  padding:12px 22px;color:var(--rule2);
+  border-bottom:3px solid transparent;margin-bottom:-2px;
+  transition:all .15s;
+}
+.tab-btn:hover{color:var(--ink)}
+.tab-btn.on{color:var(--red);border-bottom-color:var(--red)}
+
+/* ── buttons ────────────────────────────────────────────────── */
+.btn{
+  font-family:var(--body);font-weight:700;font-size:12px;
+  text-transform:uppercase;letter-spacing:.08em;
+  border:none;border-radius:4px;cursor:pointer;
+  padding:10px 22px;transition:all .15s;
+}
+.btn-primary{background:var(--red);color:#fff}
+.btn-primary:hover{background:#a93226;transform:translateY(-1px)}
+.btn-ghost{background:transparent;border:1.5px solid var(--rule2);color:var(--ink)}
+.btn-ghost:hover{border-color:var(--ink)}
+.btn-sm{padding:6px 14px;font-size:11px}
+.btn-icon{width:30px;height:30px;padding:0;display:inline-flex;align-items:center;justify-content:center;border-radius:4px}
+
+/* ── cards ──────────────────────────────────────────────────── */
+.card{background:#fff;border:1.5px solid var(--rule);border-radius:8px;padding:22px}
+.card-title{font-family:var(--head);font-size:20px;letter-spacing:.03em;margin-bottom:4px}
+.card-sub{font-size:12px;color:#888;font-weight:400}
+
+/* ── import zone ────────────────────────────────────────────── */
+.import-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:24px}
+.drop-zone{
+  border:2px dashed var(--rule);border-radius:8px;
+  padding:24px;text-align:center;cursor:pointer;
+  transition:all .2s;background:var(--cream);
+  position:relative;
+}
+.drop-zone:hover,.drop-zone.dragover{border-color:var(--red);background:var(--red-light)}
+.drop-zone input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%}
+.drop-icon{font-size:28px;margin-bottom:8px;line-height:1}
+.drop-title{font-weight:700;font-size:14px;margin-bottom:4px}
+.drop-sub{font-size:11px;color:#999}
+.drop-loaded{color:var(--green);font-weight:600;font-size:13px;margin-top:6px}
+
+.schema-hint{
+  background:var(--cream);border:1px solid var(--rule);border-radius:6px;
+  padding:12px 14px;font-family:var(--mono);font-size:11px;
+  line-height:1.7;color:#666;margin-top:10px;
+}
+.schema-hint b{color:var(--ink)}
+
+.or-row{display:flex;align-items:center;gap:12px;margin:10px 0}
+.or-line{flex:1;height:1px;background:var(--rule)}
+.or-text{font-size:11px;color:#bbb;font-weight:700;text-transform:uppercase}
+
+.textarea-csv{
+  width:100%;min-height:110px;resize:vertical;
+  background:var(--ink);color:#a8ff78;
+  font-family:var(--mono);font-size:11px;line-height:1.6;
+  border:1.5px solid #333;border-radius:6px;padding:12px;
+  outline:none;
+}
+.textarea-csv:focus{border-color:var(--red)}
+
+/* ── threshold row ──────────────────────────────────────────── */
+.threshold-row{
+  display:flex;align-items:center;gap:20px;
+  background:#fff;border:1.5px solid var(--rule);border-radius:8px;
+  padding:16px 22px;margin-bottom:24px;
+}
+.threshold-row label{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#666}
+.threshold-row input[type=range]{flex:1;accent-color:var(--red)}
+.threshold-val{
+  font-family:var(--head);font-size:32px;color:var(--red);
+  min-width:60px;text-align:right;line-height:1;
+}
+.threshold-desc{font-size:11px;color:#999;max-width:220px}
+
+/* ── run bar ─────────────────────────────────────────────────── */
+.run-bar{display:flex;align-items:center;gap:16px}
+.run-status{font-size:12px;color:#999;font-style:italic}
+
+/* ── summary grid ───────────────────────────────────────────── */
+.summary-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-bottom:28px}
+.stat-card{
+  background:#fff;border:1.5px solid var(--rule);border-radius:8px;
+  padding:16px 18px;
+}
+.stat-card .s-val{font-family:var(--mono);font-size:22px;font-weight:600;line-height:1;margin-bottom:4px}
+.stat-card .s-lbl{font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:#999}
+.stat-card .s-bar{margin-top:8px;height:3px;border-radius:2px;background:var(--rule);overflow:hidden}
+.stat-card .s-bar-fill{height:100%;border-radius:2px;transition:width .8s ease}
+.s-red .s-val{color:var(--red)} .s-red .s-bar-fill{background:var(--red)}
+.s-amber .s-val{color:var(--amber)} .s-amber .s-bar-fill{background:var(--amber)}
+.s-green .s-val{color:var(--green)} .s-green .s-bar-fill{background:var(--green)}
+.s-blue .s-val{color:var(--blue)} .s-blue .s-bar-fill{background:var(--blue)}
+
+/* ── filters row ─────────────────────────────────────────────── */
+.filter-row{display:flex;align-items:center;gap:12px;margin-bottom:18px;flex-wrap:wrap}
+.filter-row input[type=text]{
+  font-family:var(--body);font-size:12px;
+  border:1.5px solid var(--rule);border-radius:4px;padding:7px 12px;
+  background:#fff;outline:none;transition:border-color .15s;width:200px;
+}
+.filter-row input[type=text]:focus{border-color:var(--red)}
+.chip{
+  font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;
+  border:1.5px solid var(--rule);border-radius:20px;
+  padding:5px 14px;cursor:pointer;background:transparent;
+  transition:all .15s;color:#888;font-family:var(--body);
+}
+.chip:hover{border-color:var(--ink);color:var(--ink)}
+.chip.on{background:var(--red);border-color:var(--red);color:#fff}
+
+/* ── results table ──────────────────────────────────────────── */
+.results-wrap{border:1.5px solid var(--rule);border-radius:8px;overflow:hidden;background:#fff}
+.r-head{
+  display:grid;
+  grid-template-columns:160px 82px 120px 72px 72px 72px 72px 100px 90px 44px;
+  padding:10px 16px;background:var(--cream);
+  border-bottom:1.5px solid var(--rule);
+  font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#aaa;
+}
+.r-row{
+  display:grid;
+  grid-template-columns:160px 82px 120px 72px 72px 72px 72px 100px 90px 44px;
+  padding:0;border-bottom:1px solid var(--cream);
+  transition:background .1s;cursor:pointer;
+}
+.r-row:last-child{border-bottom:none}
+.r-row:hover .r-cell{background:var(--cream)}
+.r-row.flagged .r-cell:first-child{border-left:3px solid var(--red)}
+.r-cell{padding:11px 16px;font-size:12px;display:flex;align-items:center}
+.r-cell:first-child{padding-left:14px}
+
+/* severity badge */
+.badge{
+  font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;
+  border-radius:3px;padding:3px 7px;font-family:var(--mono);
+}
+.badge-high{background:#3a0a0a;color:#f87171;border:1px solid #5a1a1a}
+.badge-med{background:#2e2208;color:#f59e0b;border:1px solid #4a3810}
+.badge-low{background:#0a2a16;color:#4ade80;border:1px solid #1a4a28}
+.badge-ok{background:var(--green-light);color:var(--green);border:1px solid #b8dfc9}
+
+/* utilization bar */
+.util-bar-wrap{width:100%;background:var(--cream);border-radius:3px;height:6px;overflow:hidden}
+.util-bar{height:100%;border-radius:3px;transition:width .6s ease}
+
+/* expand chevron */
+.chevron{font-size:12px;color:#ccc;transition:transform .2s}
+.chevron.open{transform:rotate(180deg)}
+
+/* detail panel */
+.detail-panel{
+  grid-column:1/-1;
+  background:#0b0d10;color:#e5e5e5;
+  padding:16px 20px;
+  border-top:1.5px solid var(--rule);
+  display:none;
+}
+.detail-panel.open{display:block}
+.detail-title{font-size:9px;text-transform:uppercase;letter-spacing:.1em;color:#555;margin-bottom:10px;font-family:var(--mono)}
+.call-item{
+  display:flex;gap:14px;align-items:center;
+  font-family:var(--mono);font-size:11px;color:#888;
+  padding:5px 0;border-bottom:1px solid #1a1a1a;
+}
+.call-item:last-child{border-bottom:none}
+.ci-idx{color:#333;width:18px}
+.ci-time{color:#7dd3fc}
+.ci-plat{color:#c084fc}
+.ci-type{color:#34d399}
+.ci-dur{color:#555}
+.no-calls{color:#444;font-style:italic;font-size:12px}
+
+/* ── agent drilldown ─────────────────────────────────────────── */
+.agent-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px}
+.agent-card{
+  background:#fff;border:1.5px solid var(--rule);border-radius:8px;
+  padding:18px;transition:border-color .15s,transform .1s;cursor:pointer;
+}
+.agent-card:hover{border-color:var(--red);transform:translateY(-2px)}
+.ac-name{font-size:15px;font-weight:700;margin-bottom:2px}
+.ac-date{font-family:var(--mono);font-size:11px;color:#aaa;margin-bottom:12px}
+.ac-metric{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.ac-metric-lbl{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:#aaa}
+.ac-metric-val{font-family:var(--mono);font-size:13px;font-weight:600}
+.ac-util-wrap{height:4px;background:var(--cream);border-radius:2px;overflow:hidden;margin-top:10px}
+.ac-util-fill{height:100%;border-radius:2px}
+
+/* ── empty & loading states ─────────────────────────────────── */
+.empty{text-align:center;padding:80px 20px;color:#bbb}
+.empty-icon{font-size:40px;margin-bottom:12px}
+.empty-title{font-size:15px;font-weight:600;color:#aaa;margin-bottom:6px}
+.empty-sub{font-size:12px}
+
+/* ── export toolbar ──────────────────────────────────────────── */
+.export-bar{display:flex;gap:10px;margin-bottom:20px;justify-content:flex-end}
+
+/* ── timeline view ───────────────────────────────────────────── */
+.timeline-wrap{overflow-x:auto;padding-bottom:8px}
+.tl-agent-row{margin-bottom:20px}
+.tl-agent-name{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px;color:#555}
+.tl-track{position:relative;height:36px;background:var(--cream);border-radius:4px;border:1px solid var(--rule)}
+.tl-block{position:absolute;top:4px;height:28px;border-radius:3px;display:flex;align-items:center;padding:0 6px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;overflow:hidden;white-space:nowrap}
+.tl-ts{background:rgba(26,74,138,.15);border:1px solid rgba(26,74,138,.3);color:var(--blue)}
+.tl-call{background:rgba(26,107,58,.2);border:1px solid rgba(26,107,58,.4);color:var(--green);top:16px;height:16px;font-size:8px}
+.tl-hours{display:flex;position:relative;height:20px;margin-bottom:4px}
+.tl-hour-mark{position:absolute;font-family:var(--mono);font-size:9px;color:#bbb;transform:translateX(-50%)}
+
+/* ── toast ────────────────────────────────────────────────────── */
+.toast{
+  position:fixed;bottom:24px;right:24px;
+  background:var(--ink);color:#fff;
+  border-left:4px solid var(--red);
+  border-radius:6px;padding:12px 18px;
+  font-size:13px;font-weight:500;
+  z-index:999;opacity:0;transform:translateY(8px);
+  transition:all .25s;pointer-events:none;
+}
+.toast.show{opacity:1;transform:translateY(0)}
+
+/* ── responsive ──────────────────────────────────────────────── */
+@media(max-width:900px){
+  .import-grid{grid-template-columns:1fr}
+  .summary-grid{grid-template-columns:repeat(2,1fr)}
+  .r-head,.r-row{grid-template-columns:140px 70px 110px 60px 60px 60px 60px 80px 80px 36px;font-size:11px}
+  .topbar{padding:0 16px}
+  .main{padding:20px 16px}
+}
+</style>
+</head>
+<body>
+<div class="app">
+
+<!-- topbar -->
+<header class="topbar">
+  <div class="logo">
+    <div class="logo-dot"></div>
+    WPR AUDIT
+  </div>
+  <div class="topbar-right">
+    <div class="topbar-stat" id="tb-agents" style="display:none">
+      <div class="val" id="tb-agents-val">—</div>
+      <div class="lbl">Agents</div>
+    </div>
+    <div class="topbar-stat" id="tb-flagged" style="display:none">
+      <div class="val" id="tb-flagged-val" style="color:#f87171">—</div>
+      <div class="lbl">Flagged</div>
+    </div>
+    <div class="topbar-stat" id="tb-util" style="display:none">
+      <div class="val" id="tb-util-val">—</div>
+      <div class="lbl">Avg Util</div>
+    </div>
+    <button class="btn btn-ghost btn-sm" onclick="exportCSV()" id="export-btn" style="display:none">Export CSV</button>
+  </div>
+</header>
+
+<!-- main -->
+<main class="main">
+
+  <!-- TABS -->
+  <div class="tabs">
+    <button class="tab-btn on" onclick="switchTab('import',this)">① Import</button>
+    <button class="tab-btn" onclick="switchTab('results',this)" id="tab-results">② Results</button>
+    <button class="tab-btn" onclick="switchTab('agents',this)" id="tab-agents">③ By Agent</button>
+    <button class="tab-btn" onclick="switchTab('timeline',this)" id="tab-timeline">④ Timeline</button>
+  </div>
+
+  <!-- ══ IMPORT PAGE ══ -->
+  <div class="page active" id="page-import">
+    <div class="import-grid">
+
+      <!-- timesheet upload -->
+      <div class="card">
+        <div class="card-title">Timesheet Data</div>
+        <div class="card-sub" style="margin-bottom:16px">Agent logged hours &amp; activities</div>
+        <div class="drop-zone" id="dz-ts" ondragover="dzOver(event,'dz-ts')" ondragleave="dzLeave('dz-ts')" ondrop="dzDrop(event,'ts')">
+          <input type="file" accept=".csv,.txt" onchange="fileLoad(event,'ts')"/>
+          <div class="drop-icon">📋</div>
+          <div class="drop-title">Drop Timesheet CSV</div>
+          <div class="drop-sub">or click to browse</div>
+          <div class="drop-loaded" id="ts-loaded" style="display:none"></div>
+        </div>
+        <div class="or-row"><div class="or-line"></div><span class="or-text">or paste CSV</span><div class="or-line"></div></div>
+        <textarea class="textarea-csv" id="ts-text" placeholder="Agent,Date,Activity,Start,End,Notes
+Alice Chen,2024-01-15,Calling,09:00,13:00,Morning outreach
+Bob Marsh,2024-01-15,Calling,08:30,12:30,Cold calls"></textarea>
+        <div class="schema-hint" style="margin-top:10px">
+          Required: <b>Agent</b>, <b>Date</b>, <b>Activity</b>, <b>Start</b>, <b>End</b><br>
+          Optional: Notes — Activity must contain "call" to be audited
+        </div>
+      </div>
+
+      <!-- call log upload -->
+      <div class="card">
+        <div class="card-title">Call Log Data</div>
+        <div class="card-sub" style="margin-bottom:16px">Zoom / RingCentral export</div>
+        <div class="drop-zone" id="dz-cl" ondragover="dzOver(event,'dz-cl')" ondragleave="dzLeave('dz-cl')" ondrop="dzDrop(event,'cl')">
+          <input type="file" accept=".csv,.txt" onchange="fileLoad(event,'cl')"/>
+          <div class="drop-icon">📞</div>
+          <div class="drop-title">Drop Call Log CSV</div>
+          <div class="drop-sub">Zoom, RingCentral, Teams, Dialpad…</div>
+          <div class="drop-loaded" id="cl-loaded" style="display:none"></div>
+        </div>
+        <div class="or-row"><div class="or-line"></div><span class="or-text">or paste CSV</span><div class="or-line"></div></div>
+        <textarea class="textarea-csv" id="cl-text" placeholder="Agent,Date,Start,End,Platform,Type,Disposition
+Alice Chen,2024-01-15,09:12,09:31,Zoom,Outbound,Connected
+Bob Marsh,2024-01-15,08:35,09:22,Zoom,Outbound,Connected"></textarea>
+        <div class="schema-hint" style="margin-top:10px">
+          Required: <b>Agent</b>, <b>Date</b>, <b>Start</b>, <b>End</b><br>
+          Optional: Platform, Type, Disposition
+        </div>
+      </div>
+    </div>
+
+    <!-- threshold -->
+    <div class="threshold-row">
+      <label>Flag Threshold</label>
+      <input type="range" min="5" max="80" step="5" value="20" id="threshold-range" oninput="document.getElementById('threshold-display').textContent=this.value+'%'"/>
+      <div class="threshold-val" id="threshold-display">20%</div>
+      <div class="threshold-desc">Flag blocks where unverified idle time exceeds this % of the logged window</div>
+    </div>
+
+    <!-- sample + run -->
+    <div class="run-bar">
+      <button class="btn btn-primary" onclick="runAudit()">Run Audit →</button>
+      <button class="btn btn-ghost" onclick="loadSample()">Load Sample Data</button>
+      <span class="run-status" id="run-status"></span>
+    </div>
+  </div>
+
+  <!-- ══ RESULTS PAGE ══ -->
+  <div class="page" id="page-results">
+
+    <!-- summary cards -->
+    <div class="summary-grid" id="summary-grid"></div>
+
+    <!-- filter row -->
+    <div class="filter-row">
+      <input type="text" placeholder="Search agent, date…" oninput="filterResults(this.value)" id="search-box"/>
+      <button class="chip on" onclick="chipFilter('all',this)">All</button>
+      <button class="chip" onclick="chipFilter('flagged',this)">⚑ Flagged</button>
+      <button class="chip" onclick="chipFilter('ok',this)">✓ OK</button>
+      <span style="flex:1"></span>
+      <div style="font-size:11px;color:#aaa" id="result-count"></div>
+    </div>
+
+    <div class="results-wrap" id="results-table">
+      <div class="r-head">
+        <span>Agent</span>
+        <span>Date</span>
+        <span>Window</span>
+        <span>Logged</span>
+        <span>Calls</span>
+        <span>Idle</span>
+        <span>Util%</span>
+        <span>Activity</span>
+        <span>Severity</span>
+        <span></span>
+      </div>
+      <div id="results-body">
+        <div class="empty"><div class="empty-icon">⚑</div><div class="empty-title">No results yet</div><div class="empty-sub">Import data and run the audit</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ AGENTS PAGE ══ -->
+  <div class="page" id="page-agents">
+    <div class="agent-cards" id="agent-cards">
+      <div class="empty"><div class="empty-icon">👤</div><div class="empty-title">No agent data</div><div class="empty-sub">Run an audit first</div></div>
+    </div>
+  </div>
+
+  <!-- ══ TIMELINE PAGE ══ -->
+  <div class="page" id="page-timeline">
+    <div style="margin-bottom:16px;font-size:12px;color:#aaa">
+      <span style="display:inline-block;width:14px;height:10px;background:rgba(26,74,138,.2);border:1px solid rgba(26,74,138,.4);border-radius:2px;margin-right:5px;vertical-align:middle"></span>Logged window
+      <span style="display:inline-block;width:14px;height:10px;background:rgba(26,107,58,.2);border:1px solid rgba(26,107,58,.4);border-radius:2px;margin:0 5px 0 16px;vertical-align:middle"></span>Actual call
+    </div>
+    <div id="timeline-content">
+      <div class="empty"><div class="empty-icon">📊</div><div class="empty-title">No timeline</div><div class="empty-sub">Run an audit to generate the timeline view</div></div>
+    </div>
+  </div>
+
+</main>
+</div>
+
+<!-- toast -->
+<div class="toast" id="toast"></div>
+
+<script>
+/* ════════════════════════════════════════════════════════════
+   DATA
+════════════════════════════════════════════════════════════ */
+const SAMPLE_TS = `Agent,Date,Activity,Start,End,Notes
+Alice Chen,2024-01-15,Calling,09:00,13:00,Morning outreach block
+Alice Chen,2024-01-15,Admin,13:00,14:00,CRM updates
+Alice Chen,2024-01-15,Calling,14:00,17:00,Afternoon follow-ups
+Bob Marsh,2024-01-15,Calling,08:30,12:30,Cold outreach
+Bob Marsh,2024-01-15,Calling,13:30,16:30,Warm callbacks
+Carol West,2024-01-15,Calling,10:00,15:00,Pipeline calls
+David Kim,2024-01-15,Calling,09:00,12:00,New leads
+David Kim,2024-01-15,Calling,13:00,17:00,Account management`;
+
+const SAMPLE_CL = `Agent,Date,Start,End,Platform,Type,Disposition
+Alice Chen,2024-01-15,09:12,09:31,Zoom,Outbound,Connected
+Alice Chen,2024-01-15,10:45,10:52,Zoom,Inbound,Connected
+Alice Chen,2024-01-15,15:03,15:44,RingCentral,Outbound,Connected
+Alice Chen,2024-01-15,16:10,16:18,RingCentral,Outbound,Voicemail
+Bob Marsh,2024-01-15,08:35,09:22,Zoom,Outbound,Connected
+Bob Marsh,2024-01-15,09:45,10:30,Zoom,Outbound,Connected
+Bob Marsh,2024-01-15,10:55,11:40,RingCentral,Inbound,Connected
+Bob Marsh,2024-01-15,11:50,12:20,Zoom,Outbound,No Answer
+Bob Marsh,2024-01-15,13:35,14:10,RingCentral,Outbound,Connected
+Bob Marsh,2024-01-15,14:30,15:05,Zoom,Outbound,Connected
+Bob Marsh,2024-01-15,15:20,16:00,RingCentral,Inbound,Connected
+Carol West,2024-01-15,10:15,10:28,Zoom,Outbound,Voicemail
+Carol West,2024-01-15,12:00,12:08,Zoom,Outbound,Connected
+David Kim,2024-01-15,09:05,09:48,Zoom,Outbound,Connected
+David Kim,2024-01-15,10:20,11:10,RingCentral,Outbound,Connected
+David Kim,2024-01-15,11:30,11:55,Zoom,Inbound,Connected
+David Kim,2024-01-15,13:15,13:55,Zoom,Outbound,Connected
+David Kim,2024-01-15,14:05,14:50,RingCentral,Outbound,Connected
+David Kim,2024-01-15,15:10,16:30,Zoom,Inbound,Connected`;
+
+/* ════════════════════════════════════════════════════════════
+   HELPERS
+════════════════════════════════════════════════════════════ */
+let auditResults = [];
+let filteredResults = [];
+let activeChip = 'all';
+let searchVal = '';
+
+const parseTime = s => {
+  const p = s.trim().match(/^(\d{1,2}):(\d{2})(?:\s*(AM|PM))?$/i);
+  if (!p) return NaN;
+  let h = +p[1], m = +p[2];
+  if (p[3]) { if(/pm/i.test(p[3]) && h!==12) h+=12; if(/am/i.test(p[3]) && h===12) h=0; }
+  return h*60+m;
+};
+const fmtMins = m => {
+  if (isNaN(m)||m<0) return '—';
+  if (m<60) return `${m}m`;
+  const h=Math.floor(m/60),r=m%60;
+  return r?`${h}h ${r}m`:`${h}h`;
+};
+const overlap = (aS,aE,bS,bE) => Math.max(0, Math.min(aE,bE)-Math.max(aS,bS));
+
+function parseCSV(text) {
+  const lines = text.trim().split(/\r?\n/).filter(l=>l.trim());
+  if (!lines.length) return [];
+  const headers = lines[0].split(',').map(h=>h.trim().replace(/^["']|["']$/g,''));
+  return lines.slice(1).map(line => {
+    const vals = [];
+    let cur='', inQ=false;
+    for (let c of line) {
+      if (c==='"') { inQ=!inQ; continue; }
+      if (c===','&&!inQ) { vals.push(cur.trim()); cur=''; continue; }
+      cur+=c;
+    }
+    vals.push(cur.trim());
+    const obj={};
+    headers.forEach((h,i)=>{ obj[h]=vals[i]||''; });
+    return obj;
+  });
+}
+
+/* ════════════════════════════════════════════════════════════
+   DRAG + DROP + FILE LOAD
+════════════════════════════════════════════════════════════ */
+function dzOver(e,id){e.preventDefault();document.getElementById(id).classList.add('dragover')}
+function dzLeave(id){document.getElementById(id).classList.remove('dragover')}
+function dzDrop(e,which){
+  e.preventDefault();
+  dzLeave(which==='ts'?'dz-ts':'dz-cl');
+  const f=e.dataTransfer.files[0];
+  if(!f)return;
+  readFile(f,which);
+}
+function fileLoad(e,which){
+  const f=e.target.files[0];
+  if(!f)return;
+  readFile(f,which);
+}
+function readFile(f,which){
+  const r=new FileReader();
+  r.onload=ev=>{
+    const txt=ev.target.result;
+    document.getElementById(which==='ts'?'ts-text':'cl-text').value=txt;
+    const el=document.getElementById(which==='ts'?'ts-loaded':'cl-loaded');
+    el.textContent=`✓ Loaded: ${f.name}`;
+    el.style.display='block';
+    toast(`File loaded: ${f.name}`);
+  };
+  r.readAsText(f);
+}
+
+/* ════════════════════════════════════════════════════════════
+   SAMPLE DATA
+════════════════════════════════════════════════════════════ */
+function loadSample(){
+  document.getElementById('ts-text').value=SAMPLE_TS;
+  document.getElementById('cl-text').value=SAMPLE_CL;
+  document.getElementById('run-status').textContent='Sample data loaded — click Run Audit';
+  toast('Sample data loaded');
+}
+
+/* ════════════════════════════════════════════════════════════
+   AUDIT ENGINE
+════════════════════════════════════════════════════════════ */
+function runAudit(){
+  const tsRaw = document.getElementById('ts-text').value.trim();
+  const clRaw = document.getElementById('cl-text').value.trim();
+  const threshold = +document.getElementById('threshold-range').value;
+
+  if (!tsRaw) { toast('Timesheet data is empty'); return; }
+  if (!clRaw) { toast('Call log data is empty'); return; }
+
+  const ts = parseCSV(tsRaw);
+  const cl = parseCSV(clRaw);
+
+  // normalise column aliases
+  const norm = row => {
+    const keys = Object.keys(row);
+    const find = (...opts) => { for(const o of opts){const k=keys.find(k=>k.toLowerCase()===o.toLowerCase()); if(k)return row[k];} return ''; };
+    return {
+      agent: find('Agent','Name','AgentName','Employee'),
+      date:  find('Date','CallDate','date'),
+      activity: find('Activity','Type','ActivityType','Category'),
+      start: find('Start','StartTime','start_time','CallStart','from','begin'),
+      end:   find('End','EndTime','end_time','CallEnd','to','finish'),
+      notes: find('Notes','Note','Comments','comment'),
+      platform: find('Platform','Source','Tool','App'),
+      callType: find('Type','CallType','Direction','call_type'),
+      disposition: find('Disposition','Result','outcome'),
+    };
+  };
+
+  // group calling blocks per agent+date
+  const blocks = {};
+  ts.forEach(r => {
+    const n = norm(r);
+    if (!n.activity.toLowerCase().includes('call')) return;
+    const key = `${n.agent}||${n.date}`;
+    if (!blocks[key]) blocks[key] = [];
+    blocks[key].push({ start:parseTime(n.start), end:parseTime(n.end), raw:n });
+  });
+
+  // group call records per agent+date
+  const callMap = {};
+  cl.forEach(r => {
+    const n = norm(r);
+    const key = `${n.agent}||${n.date}`;
+    if (!callMap[key]) callMap[key] = [];
+    callMap[key].push({ start:parseTime(n.start), end:parseTime(n.end), raw:n });
+  });
+
+  const results = [];
+  Object.entries(blocks).forEach(([key, blks]) => {
+    const [agent, date] = key.split('||');
+    const agentCalls = callMap[key] || [];
+
+    blks.forEach(blk => {
+      if (isNaN(blk.start)||isNaN(blk.end)) return;
+      const loggedMins = blk.end - blk.start;
+      const matched = agentCalls.filter(c=>overlap(blk.start,blk.end,c.start,c.end)>0);
+      const callMins = matched.reduce((s,c)=>s+overlap(blk.start,blk.end,c.start,c.end),0);
+      const idleMins = loggedMins - callMins;
+      const utilizationPct = loggedMins>0 ? Math.round((callMins/loggedMins)*100) : 0;
+      const gapPct = loggedMins>0 ? Math.round((idleMins/loggedMins)*100) : 0;
+      const flagged = gapPct > threshold;
+      const severity = !flagged ? null : gapPct>60 ? 'High' : gapPct>35 ? 'Medium' : 'Low';
+
+      results.push({
+        agent, date,
+        blockStart: blk.raw.start, blockEnd: blk.raw.end,
+        loggedMins, callMins, idleMins,
+        utilizationPct, gapPct, callCount: matched.length,
+        flagged, severity, threshold,
+        calls: matched.map(c=>c.raw),
+      });
+    });
+  });
+
+  results.sort((a,b)=>b.gapPct-a.gapPct);
+  auditResults = results;
+  filteredResults = results;
+
+  if (!results.length) { toast('No calling blocks found — check your Activity column'); return; }
+
+  renderSummary(results);
+  renderResults(results);
+  renderAgents(results);
+  renderTimeline(ts, cl);
+  updateTopbar(results);
+
+  switchTab('results', document.querySelectorAll('.tab-btn')[1]);
+  document.getElementById('run-status').textContent=`✓ Audit complete — ${results.length} blocks analysed`;
+  document.getElementById('export-btn').style.display='';
+  toast(`Audit complete — ${results.filter(r=>r.flagged).length} discrepancies flagged`);
+}
+
+/* ════════════════════════════════════════════════════════════
+   SUMMARY CARDS
+════════════════════════════════════════════════════════════ */
+function renderSummary(res){
+  const totalLogged = res.reduce((s,r)=>s+r.loggedMins,0);
+  const totalCalls  = res.reduce((s,r)=>s+r.callMins,0);
+  const totalIdle   = totalLogged - totalCalls;
+  const flagged     = res.filter(r=>r.flagged).length;
+  const avgUtil     = res.length ? Math.round((totalCalls/totalLogged)*100) : 0;
+  const agents      = [...new Set(res.map(r=>r.agent))].length;
+
+  const cards = [
+    {lbl:'Agents',       val:agents,              sub:'in this audit',                       cls:'s-blue', pct:100},
+    {lbl:'Logged Hours', val:fmtMins(totalLogged), sub:'total calling blocks',               cls:'s-blue', pct:100},
+    {lbl:'Verified',     val:fmtMins(totalCalls),  sub:'confirmed call activity',            cls:'s-green',pct:Math.round(totalCalls/totalLogged*100)},
+    {lbl:'Unaccounted',  val:fmtMins(totalIdle),   sub:'idle / gap time',                   cls:'s-red',  pct:Math.round(totalIdle/totalLogged*100)},
+    {lbl:'Flagged',      val:`${flagged} / ${res.length}`, sub:'blocks over threshold',     cls:'s-red',  pct:Math.round(flagged/res.length*100)},
+  ];
+
+  document.getElementById('summary-grid').innerHTML = cards.map(c=>`
+    <div class="stat-card ${c.cls}">
+      <div class="s-val">${c.val}</div>
+      <div class="s-lbl">${c.lbl}</div>
+      <div style="font-size:10px;color:#bbb;margin-top:3px">${c.sub}</div>
+      <div class="s-bar"><div class="s-bar-fill" style="width:${c.pct}%"></div></div>
+    </div>
+  `).join('');
+}
+
+/* ════════════════════════════════════════════════════════════
+   RESULTS TABLE
+════════════════════════════════════════════════════════════ */
+function renderResults(res){
+  document.getElementById('result-count').textContent = `${res.length} blocks`;
+  if (!res.length){
+    document.getElementById('results-body').innerHTML=`<div class="empty"><div class="empty-icon">✓</div><div class="empty-title">No results match</div></div>`;
+    return;
+  }
+
+  const utilColor = p => p>=80?'#16a34a':p>=50?'#d97706':'#dc2626';
+  const badgeHtml = r => r.flagged
+    ? `<span class="badge badge-${r.severity==='High'?'high':r.severity==='Medium'?'med':'low'}">${r.severity}</span>`
+    : `<span class="badge badge-ok">OK</span>`;
+
+  document.getElementById('results-body').innerHTML = res.map((r,i)=>`
+    <div>
+      <div class="r-row ${r.flagged?'flagged':''}" onclick="toggleDetail(${i})" id="row-${i}">
+        <div class="r-cell" style="font-weight:600;gap:8px">
+          ${r.flagged?'<span style="color:var(--red);font-size:14px">⚑</span>':'<span style="color:#ccc;font-size:12px">·</span>'}
+          ${r.agent}
+        </div>
+        <div class="r-cell"><span style="font-family:var(--mono);font-size:11px;color:#888">${r.date.slice(5)||r.date}</span></div>
+        <div class="r-cell"><span style="font-family:var(--mono);font-size:11px;color:#3b82f6">${r.blockStart}–${r.blockEnd}</span></div>
+        <div class="r-cell"><span style="font-family:var(--mono);font-size:11px">${fmtMins(r.loggedMins)}</span></div>
+        <div class="r-cell"><span style="font-family:var(--mono);font-size:11px;color:#16a34a">${fmtMins(r.callMins)}</span></div>
+        <div class="r-cell"><span style="font-family:var(--mono);font-size:11px;color:${r.idleMins>30?'var(--red)':'#888'}">${fmtMins(r.idleMins)}</span></div>
+        <div class="r-cell">
+          <div style="width:100%">
+            <div style="font-family:var(--mono);font-size:11px;color:${utilColor(r.utilizationPct)};margin-bottom:4px">${r.utilizationPct}%</div>
+            <div class="util-bar-wrap"><div class="util-bar" style="width:${r.utilizationPct}%;background:${utilColor(r.utilizationPct)}"></div></div>
+          </div>
+        </div>
+        <div class="r-cell"><span style="font-size:11px;color:#888">${r.callCount} call${r.callCount!==1?'s':''}</span></div>
+        <div class="r-cell">${badgeHtml(r)}</div>
+        <div class="r-cell" style="justify-content:center"><span class="chevron" id="chev-${i}">▾</span></div>
+      </div>
+      <div class="detail-panel" id="detail-${i}">
+        <div class="detail-title">Call records overlapping ${r.blockStart}–${r.blockEnd}</div>
+        ${r.calls.length===0
+          ? `<div class="no-calls">No calls found in this window — ${fmtMins(r.loggedMins)} entirely unverified</div>`
+          : r.calls.map((c,j)=>`
+            <div class="call-item">
+              <span class="ci-idx">${j+1}.</span>
+              <span class="ci-time">${c.start}–${c.end}</span>
+              <span class="ci-plat">${c.platform||'Unknown'}</span>
+              <span class="ci-type">${c.callType||'—'}</span>
+              <span>${c.disposition||''}</span>
+              <span class="ci-dur">(${fmtMins(parseTime(c.end)-parseTime(c.start))})</span>
+            </div>`).join('')
+        }
+        <div style="margin-top:10px;display:flex;gap:20px;font-family:var(--mono);font-size:11px">
+          <span style="color:#555">Logged: <span style="color:#e5e5e5">${fmtMins(r.loggedMins)}</span></span>
+          <span style="color:#555">Verified: <span style="color:#4ade80">${fmtMins(r.callMins)}</span></span>
+          <span style="color:#555">Gap: <span style="color:#f87171">${fmtMins(r.idleMins)}</span></span>
+          <span style="color:#555">Gap%: <span style="color:${r.gapPct>50?'#f87171':'#fbbf24'}">${r.gapPct}%</span></span>
+        </div>
+      </div>
+    </div>
+  `).join('');
+}
+
+function toggleDetail(i){
+  const d=document.getElementById(`detail-${i}`);
+  const c=document.getElementById(`chev-${i}`);
+  const open=d.classList.toggle('open');
+  c.classList.toggle('open',open);
+}
+
+/* ════════════════════════════════════════════════════════════
+   FILTER / SEARCH
+════════════════════════════════════════════════════════════ */
+function filterResults(val){ searchVal=val.toLowerCase(); applyFilters(); }
+function chipFilter(type,el){
+  activeChip=type;
+  document.querySelectorAll('.chip').forEach(c=>c.classList.remove('on'));
+  el.classList.add('on');
+  applyFilters();
+}
+function applyFilters(){
+  let r = auditResults;
+  if (activeChip==='flagged') r=r.filter(x=>x.flagged);
+  if (activeChip==='ok') r=r.filter(x=>!x.flagged);
+  if (searchVal) r=r.filter(x=>x.agent.toLowerCase().includes(searchVal)||x.date.includes(searchVal));
+  filteredResults=r;
+  renderResults(r);
+  renderSummary(r);
+}
+
+/* ════════════════════════════════════════════════════════════
+   AGENT VIEW
+════════════════════════════════════════════════════════════ */
+function renderAgents(res){
+  const byAgent = {};
+  res.forEach(r=>{ if(!byAgent[r.agent])byAgent[r.agent]=[]; byAgent[r.agent].push(r); });
+
+  const utilColor = p => p>=80?'#16a34a':p>=50?'#d97706':'#dc2626';
+
+  document.getElementById('agent-cards').innerHTML = Object.entries(byAgent)
+    .sort((a,b)=>{
+      const af=a[1].filter(r=>r.flagged).length, bf=b[1].filter(r=>r.flagged).length;
+      return bf-af;
+    })
+    .map(([agent,rows])=>{
+      const totalLog = rows.reduce((s,r)=>s+r.loggedMins,0);
+      const totalCall = rows.reduce((s,r)=>s+r.callMins,0);
+      const util = totalLog?Math.round(totalCall/totalLog*100):0;
+      const flags = rows.filter(r=>r.flagged).length;
+      const dates = [...new Set(rows.map(r=>r.date))].join(', ');
+      return `
+        <div class="agent-card">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start">
+            <div>
+              <div class="ac-name">${agent}</div>
+              <div class="ac-date">${dates}</div>
+            </div>
+            ${flags?`<span class="badge badge-high">⚑ ${flags}</span>`:'<span class="badge badge-ok">✓ Clean</span>'}
+          </div>
+          <div class="ac-metric"><span class="ac-metric-lbl">Logged</span><span class="ac-metric-val">${fmtMins(totalLog)}</span></div>
+          <div class="ac-metric"><span class="ac-metric-lbl">On Calls</span><span class="ac-metric-val" style="color:var(--green)">${fmtMins(totalCall)}</span></div>
+          <div class="ac-metric"><span class="ac-metric-lbl">Idle</span><span class="ac-metric-val" style="color:var(--red)">${fmtMins(totalLog-totalCall)}</span></div>
+          <div class="ac-util-wrap"><div class="ac-util-fill" style="width:${util}%;background:${utilColor(util)}"></div></div>
+          <div style="display:flex;justify-content:space-between;margin-top:6px">
+            <span style="font-size:10px;color:#aaa">Utilization</span>
+            <span style="font-family:var(--mono);font-size:12px;font-weight:600;color:${utilColor(util)}">${util}%</span>
+          </div>
+        </div>`;
+    }).join('');
+}
+
+/* ════════════════════════════════════════════════════════════
+   TIMELINE VIEW
+════════════════════════════════════════════════════════════ */
+function renderTimeline(tsRows, clRows){
+  // get hour range
+  const allStart=[], allEnd=[];
+  [...tsRows,...clRows].forEach(r=>{
+    const n = normRow(r);
+    const s=parseTime(n.start), e=parseTime(n.end);
+    if(!isNaN(s)) allStart.push(s);
+    if(!isNaN(e)) allEnd.push(e);
+  });
+  const minH=Math.floor((Math.min(...allStart)||480)/60);
+  const maxH=Math.ceil((Math.max(...allEnd)||1080)/60);
+  const rangeH=maxH-minH;
+  const TW=900; // total width px
+
+  const toX=m=>((m/60-minH)/rangeH)*TW;
+
+  // group by agent
+  const agents={};
+  tsRows.forEach(r=>{
+    const n=normRow(r);
+    if(!n.activity.toLowerCase().includes('call'))return;
+    if(!agents[n.agent])agents[n.agent]={ts:[],cl:[]};
+    agents[n.agent].ts.push({start:parseTime(n.start),end:parseTime(n.end),raw:n});
+  });
+  clRows.forEach(r=>{
+    const n=normRow(r);
+    if(!agents[n.agent])agents[n.agent]={ts:[],cl:[]};
+    agents[n.agent].cl.push({start:parseTime(n.start),end:parseTime(n.end),raw:n});
+  });
+
+  // hour marks
+  const hourMarks = [];
+  for(let h=minH;h<=maxH;h++){
+    hourMarks.push(`<span class="tl-hour-mark" style="left:${toX(h*60)}px">${h<12?h+'am':h===12?'12pm':(h-12)+'pm'}</span>`);
+  }
+
+  const html = Object.entries(agents).map(([agent,{ts,cl}])=>`
+    <div class="tl-agent-row">
+      <div class="tl-agent-name">${agent}</div>
+      <div style="position:relative">
+        <div class="tl-hours" style="width:${TW}px">${hourMarks.join('')}</div>
+        <div class="tl-track" style="width:${TW}px">
+          ${ts.map(b=>{
+            const x=toX(b.start), w=toX(b.end)-x;
+            return `<div class="tl-block tl-ts" style="left:${x}px;width:${Math.max(w,4)}px" title="${b.raw.start}–${b.raw.end} Logged">Log</div>`;
+          }).join('')}
+          ${cl.map(c=>{
+            const x=toX(c.start), w=toX(c.end)-x;
+            return `<div class="tl-block tl-call" style="left:${x}px;width:${Math.max(w,4)}px;top:20px;height:12px" title="${c.raw.start}–${c.raw.end} Call (${c.raw.platform||''})"></div>`;
+          }).join('')}
+        </div>
+      </div>
+    </div>
+  `).join('');
+
+  document.getElementById('timeline-content').innerHTML=`<div class="timeline-wrap">${html}</div>`;
+}
+
+function normRow(row){
+  const keys=Object.keys(row);
+  const f=(...opts)=>{for(const o of opts){const k=keys.find(k=>k.toLowerCase()===o.toLowerCase());if(k)return row[k];}return '';};
+  return {
+    agent:f('Agent','Name','AgentName','Employee'),
+    date:f('Date','CallDate'),
+    activity:f('Activity','Type','ActivityType','Category'),
+    start:f('Start','StartTime','start_time','CallStart','from','begin'),
+    end:f('End','EndTime','end_time','CallEnd','to','finish'),
+    platform:f('Platform','Source','Tool','App'),
+  };
+}
+
+/* ════════════════════════════════════════════════════════════
+   TOPBAR STATS
+════════════════════════════════════════════════════════════ */
+function updateTopbar(res){
+  const agents=[...new Set(res.map(r=>r.agent))].length;
+  const flagged=res.filter(r=>r.flagged).length;
+  const tL=res.reduce((s,r)=>s+r.loggedMins,0);
+  const tC=res.reduce((s,r)=>s+r.callMins,0);
+  const util=tL?Math.round(tC/tL*100):0;
+
+  document.getElementById('tb-agents-val').textContent=agents;
+  document.getElementById('tb-flagged-val').textContent=flagged;
+  document.getElementById('tb-util-val').textContent=`${util}%`;
+  document.getElementById('tb-util-val').style.color=util<50?'#f87171':util<80?'#fbbf24':'#4ade80';
+
+  ['tb-agents','tb-flagged','tb-util'].forEach(id=>document.getElementById(id).style.display='block');
+}
+
+/* ════════════════════════════════════════════════════════════
+   EXPORT CSV
+════════════════════════════════════════════════════════════ */
+function exportCSV(){
+  const rows=[['Agent','Date','Block Start','Block End','Logged Mins','Call Mins','Idle Mins','Utilization%','Call Count','Flagged','Severity','Gap%']];
+  auditResults.forEach(r=>{
+    rows.push([r.agent,r.date,r.blockStart,r.blockEnd,r.loggedMins,r.callMins,r.idleMins,r.utilizationPct,r.callCount,r.flagged?'YES':'NO',r.severity||'—',r.gapPct]);
+  });
+  const csv=rows.map(r=>r.join(',')).join('\n');
+  const a=document.createElement('a');
+  a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);
+  a.download='wpr_audit_results.csv';
+  a.click();
+  toast('CSV exported');
+}
+
+/* ════════════════════════════════════════════════════════════
+   TAB SWITCH
+════════════════════════════════════════════════════════════ */
+function switchTab(name,el){
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('on'));
+  document.getElementById('page-'+name).classList.add('active');
+  el.classList.add('on');
+}
+
+/* ════════════════════════════════════════════════════════════
+   TOAST
+════════════════════════════════════════════════════════════ */
+let toastTimer;
+function toast(msg){
+  const el=document.getElementById('toast');
+  el.textContent=msg;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer=setTimeout(()=>el.classList.remove('show'),2800);
+}
+</script>
+</body>
+</html>
