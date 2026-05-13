@@ -4,6 +4,10 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>WPR Audit System</title>
+<meta name="wpr-supabase-url" content="%VITE_SUPABASE_URL%"/>
+<meta name="wpr-supabase-anon-key" content="%VITE_SUPABASE_ANON_KEY%"/>
+<meta name="wpr-table-batches" content="%VITE_BATCHES_TABLE%"/>
+<meta name="wpr-batch-bad-rows-field" content="%VITE_BATCH_BAD_ROWS_FIELD%"/>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Archivo:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet"/>
 <style>
@@ -278,7 +282,6 @@ hr.div{border:none;border-top:1px solid var(--border);margin:20px 0}
         <button class="btn btn-primary" style="width:100%" onclick="doReset()">Send Reset Link →</button>
       </div>
     </div>
-    <!-- Config hint -->
     <div style="margin-top:16px;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px">
       <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:8px">Supabase Configuration</div>
       <div class="form-row cols-2" style="margin-bottom:10px">
@@ -286,7 +289,6 @@ hr.div{border:none;border-top:1px solid var(--border);margin:20px 0}
         <div><label class="lbl">Anon Key</label><input class="inp" id="cfg-key" placeholder="eyJh..."/></div>
       </div>
       <button class="btn btn-ghost btn-sm" onclick="applyConfig()">Apply Config</button>
-      <div style="font-size:11px;color:var(--dim);margin-top:8px">Config is saved in localStorage for this browser.</div>
     </div>
   </div>
 </div>
@@ -627,6 +629,30 @@ hr.div{border:none;border-top:1px solid var(--border);margin:20px 0}
 <script>
 'use strict';
 
+function wprEnvMeta(metaName, fallback) {
+  const v = document.querySelector(`meta[name="${metaName}"]`)?.content?.trim() || '';
+  return !v || v.startsWith('%VITE_') ? fallback : v;
+}
+const TABLE_BATCHES = wprEnvMeta('wpr-table-batches', 'batches');
+const BATCH_BAD_ROWS_FIELD = wprEnvMeta('wpr-batch-bad-rows-field', 'bad_rows');
+
+function batchBadRows(b) {
+  if (!b) return 0;
+  const v = b.bad_rows ?? b.skipped_rows ?? b.bad_row_count ?? b.skipped_row_count;
+  return v != null ? Number(v) : 0;
+}
+
+function batchType(b) {
+  if (!b) return '';
+  return b.type ?? b.kin ?? b.kind ?? '';
+}
+
+function getMissingColumnFromSchemaCacheError(err) {
+  const msg = String(err?.message || '');
+  const m = msg.match(/could not find the '([^']+)' column/i);
+  return m ? m[1] : '';
+}
+
 /* ─── SUPABASE INIT ──────────────────────────────────────────────── */
 let db = null;
 let currentUser = null;
@@ -645,8 +671,14 @@ function initSupabase(url, key) {
 
 // load saved config
 (function() {
-  const url = localStorage.getItem('wpr_url');
-  const key = localStorage.getItem('wpr_key');
+  const envUrlMeta = document.querySelector('meta[name="wpr-supabase-url"]')?.content?.trim() || '';
+  const envKeyMeta = document.querySelector('meta[name="wpr-supabase-anon-key"]')?.content?.trim() || '';
+  const envUrl = envUrlMeta.startsWith('%VITE_') ? '' : envUrlMeta;
+  const envKey = envKeyMeta.startsWith('%VITE_') ? '' : envKeyMeta;
+  const savedUrl = localStorage.getItem('wpr_url') || '';
+  const savedKey = localStorage.getItem('wpr_key') || '';
+  const url = envUrl || savedUrl;
+  const key = envKey || savedKey;
   if (url && key) {
     document.getElementById('cfg-url').value = url;
     document.getElementById('cfg-key').value = key;
@@ -718,13 +750,26 @@ async function doLogout() {
 
 async function loadProfile() {
   if (!db || !currentUser) return;
-  const { data } = await db.from('profiles').select('*').eq('id', currentUser.id).single();
-  if (data) { currentProfile = data; }
-  else {
-    // auto-create
-    await db.from('profiles').insert({ id: currentUser.id, email: currentUser.email, role: 'viewer' });
-    currentProfile = { id: currentUser.id, email: currentUser.email, role: 'viewer' };
+  const { data, error } = await db.from('profiles').select('*').eq('id', currentUser.id).maybeSingle();
+  if (error) {
+    toast('Failed to load profile: ' + error.message, 'err');
+    throw error;
   }
+  if (data) {
+    currentProfile = data;
+    return;
+  }
+  // auto-create only when profile truly does not exist
+  const { data: inserted, error: insertErr } = await db
+    .from('profiles')
+    .insert({ id: currentUser.id, email: currentUser.email, role: 'viewer' })
+    .select('*')
+    .single();
+  if (insertErr) {
+    toast('Failed to create profile: ' + insertErr.message, 'err');
+    throw insertErr;
+  }
+  currentProfile = inserted;
 }
 
 function loadDemo() {
@@ -811,7 +856,7 @@ async function dbSelect(table, query={}) {
   if (query.order) q = q.order(query.order, { ascending: query.asc ?? false });
   if (query.limit) q = q.limit(query.limit);
   const { data, error } = await q;
-  if (error) { console.error(table, error); return []; }
+  if (error) return [];
   return data || [];
 }
 
@@ -824,6 +869,21 @@ async function dbInsert(table, rows) {
   return await db.from(table).insert(rows).select();
 }
 
+async function dbInsertDropMissingColumns(table, payload, maxRetries = 12) {
+  const insertPayload = { ...payload };
+  let data; let error;
+  ({ data, error } = await dbInsert(table, insertPayload));
+  let guard = 0;
+  while (error && guard < maxRetries) {
+    const missingCol = getMissingColumnFromSchemaCacheError(error);
+    if (!missingCol || !(missingCol in insertPayload)) break;
+    delete insertPayload[missingCol];
+    ({ data, error } = await dbInsert(table, insertPayload));
+    guard++;
+  }
+  return { data, error };
+}
+
 async function dbUpdate(table, id, updates) {
   if (isDemoMode) {
     const idx = DEMO[table].findIndex(r=>r.id===id);
@@ -831,6 +891,21 @@ async function dbUpdate(table, id, updates) {
     return { error: null };
   }
   return await db.from(table).update(updates).eq('id', id);
+}
+
+async function dbUpdateDropMissingColumns(table, id, updates, maxRetries = 12) {
+  const patch = { ...updates };
+  let error;
+  ({ error } = await dbUpdate(table, id, patch));
+  let guard = 0;
+  while (error && guard < maxRetries) {
+    const missingCol = getMissingColumnFromSchemaCacheError(error);
+    if (!missingCol || !(missingCol in patch)) break;
+    delete patch[missingCol];
+    ({ error } = await dbUpdate(table, id, patch));
+    guard++;
+  }
+  return { error };
 }
 
 async function dbDelete(table, id) {
@@ -845,7 +920,7 @@ async function dbDelete(table, id) {
 async function loadDashboard() {
   const [agents, batches, discs, runs] = await Promise.all([
     dbSelect('agents', { eq: { status:'active' } }),
-    dbSelect('batches'),
+    dbSelect(TABLE_BATCHES),
     dbSelect('discrepancies'),
     dbSelect('runs'),
   ]);
@@ -873,9 +948,13 @@ async function loadDashboard() {
 }
 
 /* ─── AGENTS ─────────────────────────────────────────────────────── */
+function agentLabel(a) {
+  if (!a) return '';
+  return String(a.full_name ?? a.name ?? '').trim();
+}
 let allAgents = [], agentFilter = 'all', agentSearch = '';
 async function loadAgents() {
-  allAgents = await dbSelect('agents', { order:'name', asc:true });
+  allAgents = await dbSelect('agents', { order:'full_name', asc:true });
   renderAgents();
 }
 function filterAgents(v) { agentSearch = v.toLowerCase(); renderAgents(); }
@@ -888,11 +967,11 @@ function agentChip(t, el) {
 function renderAgents() {
   let rows = allAgents;
   if (agentFilter !== 'all') rows = rows.filter(a=>a.status===agentFilter);
-  if (agentSearch) rows = rows.filter(a=>(a.name+a.email+a.employee_id).toLowerCase().includes(agentSearch));
+  if (agentSearch) rows = rows.filter(a=>(agentLabel(a)+(a.email||'')+(a.employee_id||'')).toLowerCase().includes(agentSearch));
   const isAdmin = currentProfile?.role === 'admin';
   document.getElementById('agents-body').innerHTML = rows.length ? rows.map(a=>`
     <tr>
-      <td style="font-weight:500">${a.name}</td>
+      <td style="font-weight:500">${agentLabel(a)}</td>
       <td class="text-muted mono" style="font-size:11px">${a.email||'—'}</td>
       <td class="mono text-muted" style="font-size:11px">${a.employee_id||'—'}</td>
       <td>${a.team ? `<span class="tag tag-blue">${a.team}</span>` : '—'}</td>
@@ -912,7 +991,7 @@ function openAgentModal(id) {
     ['name','email','a-empid','team','status'].forEach(f=>{
       const el = document.getElementById('a-'+f) || document.getElementById(f==='a-empid'?'a-empid':null);
     });
-    document.getElementById('a-name').value = a.name||'';
+    document.getElementById('a-name').value = agentLabel(a);
     document.getElementById('a-email').value = a.email||'';
     document.getElementById('a-empid').value = a.employee_id||'';
     document.getElementById('a-team').value = a.team||'';
@@ -925,14 +1004,15 @@ function openAgentModal(id) {
 }
 async function saveAgent() {
   const id = document.getElementById('agent-id').value;
+  const nm = document.getElementById('a-name').value.trim();
   const payload = {
-    name: document.getElementById('a-name').value.trim(),
+    full_name: nm,
     email: document.getElementById('a-email').value.trim()||null,
     employee_id: document.getElementById('a-empid').value.trim()||null,
     team: document.getElementById('a-team').value.trim()||null,
     status: document.getElementById('a-status').value,
   };
-  if (!payload.name) { document.getElementById('agent-err').textContent='Name is required'; document.getElementById('agent-err').style.display='flex'; return; }
+  if (!nm) { document.getElementById('agent-err').textContent='Name is required'; document.getElementById('agent-err').style.display='flex'; return; }
   let err;
   if (id) { const r = await dbUpdate('agents', id, payload); err = r.error; }
   else { const r = await dbInsert('agents', payload); err = r.error; }
@@ -1089,8 +1169,8 @@ async function runAgentMatching() {
     // 3. fuzzy name
     if (!matched && agentRaw) {
       const norm = s=>s.toLowerCase().replace(/\s+/g,' ').trim();
-      matched = agents.find(a=>norm(a.name)===norm(agentRaw));
-      if (!matched) matched = agents.find(a=>norm(a.name).includes(norm(agentRaw))||norm(agentRaw).includes(norm(a.name)));
+      matched = agents.find(a=>norm(agentLabel(a))===norm(agentRaw));
+      if (!matched) matched = agents.find(a=>norm(agentLabel(a)).includes(norm(agentRaw))||norm(agentRaw).includes(norm(agentLabel(a))));
     }
 
     const enriched = { ...row, _idx: i, _agentRaw: agentRaw, _matchedAgent: matched };
@@ -1104,7 +1184,7 @@ async function runAgentMatching() {
   if (unmatched > 0) {
     document.getElementById('unmatched-container').style.display='block';
     document.getElementById('btn-next-2').disabled = true;
-    const agentOpts = agents.map(a=>`<option value="${a.id}|${a.name}">${a.name} (${a.employee_id||a.email||'no ID'})</option>`).join('');
+    const agentOpts = agents.map(a=>`<option value="${a.id}|${encodeURIComponent(agentLabel(a))}">${agentLabel(a)} (${a.employee_id||a.email||'no ID'})</option>`).join('');
     document.getElementById('unmatched-body').innerHTML = importState.unmatchedRows.map((row,i)=>`
       <div style="background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:12px;margin-bottom:8px">
         <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
@@ -1126,7 +1206,10 @@ async function runAgentMatching() {
 
 function resolveUnmatched(i, val) {
   if (!val) return;
-  const [aid, aname] = val.split('|');
+  const sep = val.indexOf('|');
+  if (sep < 0) return;
+  const aid = val.slice(0, sep);
+  const aname = decodeURIComponent(val.slice(sep + 1));
   const row = importState.unmatchedRows[i];
   row._matchedAgent = { id: aid, name: aname };
   row._resolved = true;
@@ -1139,7 +1222,7 @@ function resolveUnmatched(i, val) {
 async function createAgentInline(i) {
   const row = importState.unmatchedRows[i];
   const name = row._agentRaw;
-  const { data, error } = await dbInsert('agents', { name, status:'active' });
+  const { data, error } = await dbInsert('agents', { full_name: name, status:'active' });
   if (error||!data) { toast('Error creating agent','err'); return; }
   const newAgent = Array.isArray(data)?data[0]:data;
   row._matchedAgent = newAgent; row._resolved = true;
@@ -1169,7 +1252,7 @@ function buildPreview() {
   const thead = '<thead><tr>'+fields.map(f=>`<th>${f.label}</th>`).join('')+'<th>Agent Match</th></tr></thead>';
   const tbody = '<tbody>'+rows.map(row=>{
     const cells = fields.map(f=>`<td>${row[map[f.key]]||'—'}</td>`).join('');
-    return `<tr><td colspan="0"></td>${cells}<td style="color:var(--green)">${row._matchedAgent?.name||'—'}</td></tr>`;
+    return `<tr><td colspan="0"></td>${cells}<td style="color:var(--green)">${agentLabel(row._matchedAgent)||'—'}</td></tr>`;
   }).join('')+'</tbody>';
   document.getElementById('preview-table').innerHTML=thead+tbody;
   document.getElementById('preview-count').textContent=importState.goodRows.length;
@@ -1197,12 +1280,14 @@ async function doCommit() {
 
   const batchPayload = {
     type: importState.fileType,
+    kin: importState.fileType,
+    kind: importState.fileType,
     source: importState.source,
     timezone: importState.tz,
     row_count: importState.goodRows.length,
-    bad_rows: importState.badRows.length,
+    [BATCH_BAD_ROWS_FIELD]: importState.badRows.length,
   };
-  const { data: batchData, error: bErr } = await dbInsert('batches', batchPayload);
+  const { data: batchData, error: bErr } = await dbInsertDropMissingColumns(TABLE_BATCHES, batchPayload);
   if (bErr) { toast('Batch create failed: '+bErr.message,'err'); document.getElementById('btn-commit').disabled=false; return; }
   const batch = Array.isArray(batchData)?batchData[0]:batchData;
   const batchId = batch?.id;
@@ -1216,7 +1301,7 @@ async function doCommit() {
     const base = {
       batch_id: batchId,
       agent_id: row._matchedAgent?.id,
-      agent_name: row._matchedAgent?.name || row[map.agent],
+      agent_name: agentLabel(row._matchedAgent) || row[map.agent],
       date: row[map.date],
       raw_row: JSON.stringify(row),
     };
@@ -1246,22 +1331,21 @@ async function doCommit() {
 }
 
 function toUTC(timeStr, dateStr, tz) {
-  // Best-effort: parse time and note timezone — full IANA conversion needs Intl
   return `${dateStr}T${timeStr}:00`;
 }
 
 /* ─── BATCHES ────────────────────────────────────────────────────── */
 async function loadBatches() {
-  const rows = await dbSelect('batches', { order:'created_at', asc:false });
+  const rows = await dbSelect(TABLE_BATCHES, { order:'created_at', asc:false });
   const isAdmin = currentProfile?.role==='admin';
   document.getElementById('batches-body').innerHTML = rows.length ? rows.map(b=>`
     <tr>
       <td class="mono text-muted" style="font-size:10px">${b.id?.slice(0,8)||'demo'}…</td>
-      <td><span class="tag ${b.type==='timesheet'?'tag-blue':'tag-purple'}">${b.type}</span></td>
-      <td>${b.source}</td>
-      <td class="mono" style="font-size:11px">${b.timezone||'UTC'}</td>
-      <td class="mono text-green">${b.row_count}</td>
-      <td class="mono ${b.bad_rows?'text-red':'text-muted'}">${b.bad_rows||0}</td>
+      <td><span class="tag ${batchType(b)==='timesheet'?'tag-blue':'tag-purple'}">${batchType(b)||'—'}</span></td>
+      <td>${b.source||b.provider||b.origin||'—'}</td>
+      <td class="mono" style="font-size:11px">${b.timezone||b.tz||'UTC'}</td>
+      <td class="mono text-green">${b.row_count ?? b.rows ?? 0}</td>
+      <td class="mono ${batchBadRows(b)?'text-red':'text-muted'}">${batchBadRows(b)}</td>
       <td class="mono text-muted" style="font-size:11px">${(b.created_at||'').slice(0,16).replace('T',' ')}</td>
       <td class="admin-only">${isAdmin?`<button class="btn btn-xs" style="background:var(--red-dim);border:1px solid rgba(232,64,64,.3);color:var(--red)" onclick="deleteBatch('${b.id}')">Delete</button>`:''}</td>
     </tr>`).join('') :
@@ -1270,19 +1354,19 @@ async function loadBatches() {
 
 async function deleteBatch(id) {
   if (!confirm('Delete this batch? This will NOT remove the rows already written.')) return;
-  await dbDelete('batches', id);
+  await dbDelete(TABLE_BATCHES, id);
   toast('Batch deleted','ok'); loadBatches();
 }
 
 /* ─── RUN AUDIT ──────────────────────────────────────────────────── */
 async function loadRunAuditOptions() {
-  const batches = await dbSelect('batches');
-  const tsBatches = batches.filter(b=>b.type==='timesheet');
-  const clBatches = batches.filter(b=>b.type==='calllog');
+  const batches = await dbSelect(TABLE_BATCHES);
+  const tsBatches = batches.filter(b=>batchType(b)==='timesheet');
+  const clBatches = batches.filter(b=>batchType(b)==='calllog');
   document.getElementById('aud-ts-batch').innerHTML = '<option value="">— select —</option>' +
-    tsBatches.map(b=>`<option value="${b.id}">${b.source} — ${(b.created_at||'').slice(0,10)} (${b.row_count} rows)</option>`).join('');
+    tsBatches.map(b=>`<option value="${b.id}">${b.source||b.provider||b.origin||'Batch'} — ${(b.created_at||'').slice(0,10)} (${b.row_count ?? b.rows ?? 0} rows)</option>`).join('');
   document.getElementById('aud-cl-batch').innerHTML =
-    clBatches.map(b=>`<option value="${b.id}">${b.source} — ${(b.created_at||'').slice(0,10)} (${b.row_count} rows)</option>`).join('');
+    clBatches.map(b=>`<option value="${b.id}">${b.source||b.provider||b.origin||'Batch'} — ${(b.created_at||'').slice(0,10)} (${b.row_count ?? b.rows ?? 0} rows)</option>`).join('');
 }
 
 async function doRunAudit() {
@@ -1304,7 +1388,7 @@ async function doRunAudit() {
   const run = { name:name||`Audit ${from}→${to}`, date_from:from, date_to:to,
     ts_batch_id:tsBid||null, cl_batch_ids:JSON.stringify(clBids),
     threshold:thr, critical_pct:crit, status:'processing' };
-  const { data:runData, error:runErr } = await dbInsert('runs', run);
+  const { data:runData, error:runErr } = await dbInsertDropMissingColumns('runs', run);
   if (runErr&&!isDemoMode) { showErr('run-audit-err',runErr.message); document.getElementById('btn-run-audit').disabled=false; return; }
   const runId = (Array.isArray(runData)?runData[0]:runData)?.id || 'run'+Date.now();
 
@@ -1338,7 +1422,7 @@ async function doRunAudit() {
   document.getElementById('run-audit-progress').textContent=`Writing ${discrepancies.length} discrepancy records…`;
 
   if (discrepancies.length) await dbInsert('discrepancies', discrepancies);
-  await dbUpdate('runs', runId, { status:'done', discrepancy_count: discrepancies.length });
+  await dbUpdateDropMissingColumns('runs', runId, { status:'done', discrepancy_count: discrepancies.length });
 
   if (isDemoMode) {
     DEMO.runs.unshift({ id:runId, name:run.name, date_from:from, date_to:to, threshold:thr, critical_pct:crit, status:'done', discrepancy_count:discrepancies.length, created_at:new Date().toISOString() });
@@ -1507,7 +1591,8 @@ async function saveResolve() {
   const id=document.getElementById('resolve-id').value;
   const notes=document.getElementById('resolve-notes').value.trim();
   const by=document.getElementById('resolve-by').value.trim();
-  await dbUpdate('discrepancies',id,{resolution:notes,reviewed_by:by});
+  const { error } = await dbUpdate('discrepancies',id,{resolution:notes,reviewed_by:by});
+  if (error) { toast(error.message,'err'); return; }
   closeModal('modal-resolve');
   toast('Discrepancy resolved','ok');
   loadDiscrepancies();
